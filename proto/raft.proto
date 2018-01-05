@@ -6,6 +6,10 @@ service AppendEntries {
   rpc AppendEntriesRPC (AppendEntriesReq) returns (AppendEntriesResp) {}
 }
 
+service Election {
+  rpc ElectionRPC (ElectionReq) returns (ElectionResp){}
+}
+
 message LogEntris {
   int32 index = 1;
   int32 term = 2;
@@ -24,4 +28,16 @@ message AppendEntriesReq {
 message AppendEntriesResp {
   int32 term = 1;
   bool success = 2;
+}
+
+message ElectionReq {
+  int32 term = 1;
+  int32 candidateId = 2;
+  int32 lastLogIndex = 3;
+  int32 lastLogTerm = 4;
+}
+
+message ElectionResp {
+  int32 term = 1;
+  bool votedGranted = 2;
 }

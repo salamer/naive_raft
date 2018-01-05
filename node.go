@@ -21,7 +21,7 @@ const (
 )
 
 const (
-	INTERVAL = 4 //heartbeat INTERVAL
+	INTERVAL = 5 //heartbeat INTERVAL
 )
 
 type NodeConf struct {
@@ -42,8 +42,12 @@ type Node struct {
 	nextIndex       []int
 	matchIndex      []int
 	state           int
+	leaderId        int       //record the leader now
 	heartbeatSignal chan bool //the heartbeat channel
+	finishState     chan bool
 	siblingNodes    []NodeConf
+	electionResCnt  int //count for the election request result
+	votedCnt        int //count for the server which has vote for it
 }
 
 func NewNode(name string, id int, conf string) *Node {
@@ -67,12 +71,21 @@ func NewNode(name string, id int, conf string) *Node {
 		matchIndex:      matchIndex,
 		state:           FOLLOWER,
 		heartbeatSignal: make(chan bool),
+		finishState:     make(chan bool),
 		siblingNodes:    loadNodesConf(conf),
 	}
 }
 
 func (node *Node) getState() int {
 	return node.state
+}
+
+func (node *Node) termIncrement() {
+	node.currentTerm += 1
+}
+
+func (node *Node) gotHeartbeat() {
+	node.heartbeatSignal <- true
 }
 
 func (node *Node) setState(state int) error {
@@ -83,17 +96,22 @@ func (node *Node) setState(state int) error {
 	return StateErr
 }
 
+func (node *Node) setLeader(leaderId int) {
+	node.leaderId = leaderId
+}
+
 func (node *Node) loop() {
 	for {
+		fmt.Printf("%+v : term is %+v,leader is %+v\n", node.name, node.currentTerm, node.leaderId)
 		switch node.getState() {
 		case FOLLOWER:
-			fmt.Println("I'm follower now")
+			fmt.Println(node.name + ": I'm follower now")
 			node.follower_loop()
 		case CANDIDATE:
-			fmt.Println("I'm candidate now")
+			fmt.Println(node.name + ": I'm candidate now")
 			node.candidate_loop()
 		case LEADER:
-			fmt.Println("I'm leader now")
+			fmt.Println(node.name + ": I'm leader now")
 			node.leader_loop()
 		}
 	}
@@ -105,22 +123,33 @@ func (node *Node) follower_loop() {
 		select {
 		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
 			fmt.Println("timeout!")
-			//			node.setState(CANDIDATE)
+			node.setState(CANDIDATE)
+			flag = false
 		case <-node.heartbeatSignal:
 			fmt.Println("got a heartbeat")
+		case <-node.finishState:
+			flag = false
 		}
 	}
 }
 
 func (node *Node) candidate_loop() {
-	fmt.Println("I'm candidate now")
 	flag := true
 	for flag {
+		//initialize node condition
+		node.electionResCnt = 1
+		node.votedCnt = 1 // vote for itself
+		node.votedFor = node.id
+		node.setLeader(node.id)
+		node.termIncrement() //term++
+
+		_ = node.Elect()
+		fmt.Printf("candidate %+v: my term is %+v\n", node.name, node.currentTerm)
 		select {
 		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
-			node.setState(CANDIDATE)
-		case <-node.heartbeatSignal:
-			fmt.Println("got a heartbeat")
+			fmt.Println("candidate timeout")
+		case <-node.finishState:
+			flag = false
 		}
 	}
 }
@@ -129,28 +158,145 @@ func (node *Node) leader_loop() {
 	flag := true
 	for flag {
 		select {
-		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
-			node.setState(CANDIDATE)
-		case <-node.heartbeatSignal:
-			fmt.Println("got a heartbeat")
+		case <-time.After(time.Second * time.Duration(rand.Intn(INTERVAL))):
+			_ = node.AppendEntry()
+		case <-node.finishState:
+			flag = false
 		}
 	}
 }
 
 //RPC function
+func (node *Node) getEntris(start int, end int) []*pb.LogEntris {
+	ResEntris := make([]*pb.LogEntris, start-end)
+	for i := start; i < end; i++ {
+		ResEntris[i].Index = int32(node.log[i].idx)
+		ResEntris[i].Term = int32(node.log[i].term)
+		ResEntris[i].Data = node.log[i].data
+	}
+	return ResEntris
+}
+
+func (node *Node) AppendEntry() error {
+	if node.getState() == LEADER {
+		for _, sibling := range node.siblingNodes {
+			if sibling.ID != node.id {
+				go func(host string, port int) {
+					conn, e := grpc.Dial(host+":"+strconv.Itoa(port), grpc.WithInsecure())
+					if e != nil {
+						fmt.Printf("did not connect: %v", e)
+					}
+
+					c := pb.NewAppendEntriesClient(conn)
+
+					_, err := c.AppendEntriesRPC(context.Background(), &pb.AppendEntriesReq{
+						Term:          int32(node.currentTerm),
+						LeaderId:      int32(node.id),
+						PrevLogIndex:  int32(node.commitIndex),
+						PrevTermIndex: int32(node.commitIndex),
+						LogEntris:     node.getEntris(0, len(node.log)),
+						LeaderCommit:  int32(node.commitIndex),
+					})
+					if err != nil {
+						fmt.Printf("append entries error: %v\n", err)
+					}
+
+					defer conn.Close()
+				}(sibling.Host, sibling.Port)
+			}
+		}
+		return nil
+	}
+	return NotLeaderErr
+}
 
 func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq) (*pb.AppendEntriesResp, error) {
+	if node.getState() != FOLLOWER {
+		node.setState(FOLLOWER)
+		node.finishState <- true
+		node.setLeader(int(in.LeaderId))
+		node.currentTerm = int(in.Term)
+	} else {
+		node.heartbeatSignal <- true
+	}
 	return &pb.AppendEntriesResp{Term: 1, Success: true}, nil
 }
 
-func (node *Node) Run(port int) {
-	node.loop()
-	lis, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+func (node *Node) Elect() error {
+	if node.getState() == CANDIDATE {
+		for _, sibling := range node.siblingNodes {
+			if sibling.ID != node.id {
+				go func(host string, port int, sibling NodeConf) {
+					conn, e := grpc.Dial(host+":"+strconv.Itoa(port), grpc.WithInsecure())
+					if e != nil {
+						fmt.Printf("did not connect: %v", e)
+					}
+
+					c := pb.NewElectionClient(conn)
+					r, err := c.ElectionRPC(context.Background(), &pb.ElectionReq{
+						Term:         int32(node.currentTerm),
+						CandidateId:  int32(node.id),
+						LastLogIndex: int32(node.commitIndex),
+						LastLogTerm:  int32(node.currentTerm),
+					})
+
+					//means has already get res from server i
+					node.electionResCnt += 1
+					fmt.Printf("vote:%+v,res:%+v\n", node.votedCnt, node.electionResCnt)
+					if err != nil {
+						fmt.Printf("election error: %v\n", err)
+					} else {
+						if r.VotedGranted {
+							fmt.Printf("%+v got vote from  %+v\n", node.id, sibling.ID)
+							node.votedCnt += 1
+						}
+					}
+					if node.votedCnt >= len(node.siblingNodes)/2 {
+						node.setState(LEADER)
+						node.finishState <- true
+					} else {
+						// eletion fail,return to de follower state
+						if node.electionResCnt >= len(node.siblingNodes)/2 {
+							node.setState(FOLLOWER)
+							node.finishState <- true
+						}
+					}
+
+					defer conn.Close()
+				}(sibling.Host, sibling.Port, sibling)
+			}
+		}
+		return nil
+	}
+	return NotLeaderErr
+}
+
+func (node *Node) ElectionRPC(ctx context.Context, in *pb.ElectionReq) (*pb.ElectionResp, error) {
+	node.gotHeartbeat()
+	fmt.Printf("%+v got vote request by %+v\n", node.id, in.CandidateId)
+	if node.currentTerm < int(in.Term) {
+		node.currentTerm = int(in.Term)
+		return &pb.ElectionResp{
+			Term:         int32(node.currentTerm),
+			VotedGranted: true,
+		}, nil
+	}
+	return &pb.ElectionResp{
+		Term:         int32(node.currentTerm),
+		VotedGranted: false,
+	}, nil
+}
+func (node *Node) Run(host string, port int) {
+	//run node state loop
+	go node.loop()
+
+	lis, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
 	if err != nil {
 		fmt.Printf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
 	pb.RegisterAppendEntriesServer(s, node)
+	pb.RegisterElectionServer(s, node)
 	reflection.Register(s)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
