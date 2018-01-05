@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	pb "github.com/salamer/naive_raft/proto"
@@ -48,6 +49,8 @@ type Node struct {
 	siblingNodes    []NodeConf
 	electionResCnt  int //count for the election request result
 	votedCnt        int //count for the server which has vote for it
+	observersLock   sync.RWMutex
+	actionLock      sync.RWMutex //in some action function
 }
 
 func NewNode(name string, id int, conf string) *Node {
@@ -81,7 +84,9 @@ func (node *Node) getState() int {
 }
 
 func (node *Node) termIncrement() {
+	node.actionLock.Lock()
 	node.currentTerm += 1
+	node.actionLock.Unlock()
 }
 
 func (node *Node) gotHeartbeat() {
@@ -90,14 +95,18 @@ func (node *Node) gotHeartbeat() {
 
 func (node *Node) setState(state int) error {
 	if state >= 0 && state < 3 {
+		node.actionLock.Lock()
 		node.state = state
+		node.actionLock.Unlock()
 		return nil
 	}
 	return StateErr
 }
 
 func (node *Node) setLeader(leaderId int) {
+	node.actionLock.Lock()
 	node.leaderId = leaderId
+	node.actionLock.Unlock()
 }
 
 func (node *Node) loop() {
@@ -137,12 +146,13 @@ func (node *Node) candidate_loop() {
 	flag := true
 	for flag {
 		//initialize node condition
+		node.actionLock.Lock()
 		node.electionResCnt = 1
 		node.votedCnt = 1 // vote for itself
 		node.votedFor = node.id
+		node.actionLock.Unlock()
 		node.setLeader(node.id)
 		node.termIncrement() //term++
-
 		_ = node.Elect()
 		fmt.Printf("candidate %+v: my term is %+v\n", node.name, node.currentTerm)
 		select {
@@ -188,7 +198,7 @@ func (node *Node) AppendEntry() error {
 					}
 
 					c := pb.NewAppendEntriesClient(conn)
-
+					node.observersLock.RLock()
 					_, err := c.AppendEntriesRPC(context.Background(), &pb.AppendEntriesReq{
 						Term:          int32(node.currentTerm),
 						LeaderId:      int32(node.id),
@@ -200,7 +210,7 @@ func (node *Node) AppendEntry() error {
 					if err != nil {
 						fmt.Printf("append entries error: %v\n", err)
 					}
-
+					node.observersLock.RUnlock()
 					defer conn.Close()
 				}(sibling.Host, sibling.Port)
 			}
@@ -233,14 +243,16 @@ func (node *Node) Elect() error {
 					}
 
 					c := pb.NewElectionClient(conn)
+					node.observersLock.RLock()
 					r, err := c.ElectionRPC(context.Background(), &pb.ElectionReq{
 						Term:         int32(node.currentTerm),
 						CandidateId:  int32(node.id),
 						LastLogIndex: int32(node.commitIndex),
 						LastLogTerm:  int32(node.currentTerm),
 					})
-
+					node.observersLock.RUnlock()
 					//means has already get res from server i
+					node.observersLock.Lock()
 					node.electionResCnt += 1
 					fmt.Printf("vote:%+v,res:%+v\n", node.votedCnt, node.electionResCnt)
 					if err != nil {
@@ -251,6 +263,7 @@ func (node *Node) Elect() error {
 							node.votedCnt += 1
 						}
 					}
+					node.observersLock.Unlock()
 					if node.votedCnt >= len(node.siblingNodes)/2 {
 						node.setState(LEADER)
 						node.finishState <- true
