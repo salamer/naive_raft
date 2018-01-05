@@ -33,24 +33,29 @@ type NodeConf struct {
 }
 
 type Node struct {
-	name            string
-	id              int
-	currentTerm     int
-	votedFor        int
-	log             []Log
-	commitIndex     int
-	lastApplied     int
-	nextIndex       []int
-	matchIndex      []int
-	state           int
-	leaderId        int       //record the leader now
+	name        string
+	id          int
+	currentTerm int
+	votedFor    int
+	log         []Log
+	commitIndex int
+	lastApplied int
+	nextIndex   []int
+	matchIndex  []int
+	state       int
+	leaderId    int //record the leader now
+
 	heartbeatSignal chan bool //the heartbeat channel
 	finishState     chan bool
-	siblingNodes    []NodeConf
-	electionResCnt  int //count for the election request result
-	votedCnt        int //count for the server which has vote for it
-	observersLock   sync.RWMutex
-	actionLock      sync.RWMutex //in some action function
+
+	siblingNodes []NodeConf
+
+	electionResCnt int //count for the election request result
+	votedCnt       int //count for the server which has vote for it
+	majoritySize   int
+
+	observersLock sync.RWMutex
+	actionLock    sync.RWMutex //in some action function
 }
 
 func NewNode(name string, id int, conf string) *Node {
@@ -62,6 +67,7 @@ func NewNode(name string, id int, conf string) *Node {
 		nextIndex[i] = 0
 		matchIndex[i] = 0
 	}
+	nodeconfs := loadNodesConf(conf)
 	return &Node{
 		name:            name,
 		id:              id,
@@ -75,7 +81,8 @@ func NewNode(name string, id int, conf string) *Node {
 		state:           FOLLOWER,
 		heartbeatSignal: make(chan bool),
 		finishState:     make(chan bool),
-		siblingNodes:    loadNodesConf(conf),
+		siblingNodes:    nodeconfs,
+		majoritySize:    getMajoritySize(len(nodeconfs)),
 	}
 }
 
@@ -148,13 +155,13 @@ func (node *Node) candidate_loop() {
 		//initialize node condition
 		node.actionLock.Lock()
 		node.electionResCnt = 1
-		node.votedCnt = 1 // vote for itself
+		node.votedCnt = 1 // vote to itself
 		node.votedFor = node.id
 		node.actionLock.Unlock()
 		node.setLeader(node.id)
 		node.termIncrement() //term++
-		_ = node.Elect()
 		fmt.Printf("candidate %+v: my term is %+v\n", node.name, node.currentTerm)
+		_ = node.Canvass()
 		select {
 		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
 			fmt.Println("candidate timeout")
@@ -232,7 +239,7 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 	return &pb.AppendEntriesResp{Term: 1, Success: true}, nil
 }
 
-func (node *Node) Elect() error {
+func (node *Node) Canvass() error {
 	if node.getState() == CANDIDATE {
 		for _, sibling := range node.siblingNodes {
 			if sibling.ID != node.id {
@@ -242,9 +249,9 @@ func (node *Node) Elect() error {
 						fmt.Printf("did not connect: %v", e)
 					}
 
-					c := pb.NewElectionClient(conn)
+					c := pb.NewCanvassClient(conn)
 					node.observersLock.RLock()
-					r, err := c.ElectionRPC(context.Background(), &pb.ElectionReq{
+					r, err := c.CanvassRPC(context.Background(), &pb.CanvassReq{
 						Term:         int32(node.currentTerm),
 						CandidateId:  int32(node.id),
 						LastLogIndex: int32(node.commitIndex),
@@ -258,18 +265,18 @@ func (node *Node) Elect() error {
 					if err != nil {
 						fmt.Printf("election error: %v\n", err)
 					} else {
-						if r.VotedGranted {
+						if r.VotedGranted && r.Term == int32(node.currentTerm) {
 							fmt.Printf("%+v got vote from  %+v\n", node.id, sibling.ID)
 							node.votedCnt += 1
 						}
 					}
 					node.observersLock.Unlock()
-					if node.votedCnt >= len(node.siblingNodes)/2 {
+					if node.votedCnt >= node.majoritySize {
 						node.setState(LEADER)
 						node.finishState <- true
 					} else {
 						// eletion fail,return to de follower state
-						if node.electionResCnt >= len(node.siblingNodes)/2 {
+						if node.electionResCnt >= node.majoritySize {
 							node.setState(FOLLOWER)
 							node.finishState <- true
 						}
@@ -284,17 +291,17 @@ func (node *Node) Elect() error {
 	return NotLeaderErr
 }
 
-func (node *Node) ElectionRPC(ctx context.Context, in *pb.ElectionReq) (*pb.ElectionResp, error) {
+func (node *Node) CanvassRPC(ctx context.Context, in *pb.CanvassReq) (*pb.CanvassResp, error) {
 	node.gotHeartbeat()
 	fmt.Printf("%+v got vote request by %+v\n", node.id, in.CandidateId)
 	if node.currentTerm < int(in.Term) {
 		node.currentTerm = int(in.Term)
-		return &pb.ElectionResp{
+		return &pb.CanvassResp{
 			Term:         int32(node.currentTerm),
 			VotedGranted: true,
 		}, nil
 	}
-	return &pb.ElectionResp{
+	return &pb.CanvassResp{
 		Term:         int32(node.currentTerm),
 		VotedGranted: false,
 	}, nil
@@ -309,7 +316,7 @@ func (node *Node) Run(host string, port int) {
 	}
 	s := grpc.NewServer()
 	pb.RegisterAppendEntriesServer(s, node)
-	pb.RegisterElectionServer(s, node)
+	pb.RegisterCanvassServer(s, node)
 	reflection.Register(s)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)

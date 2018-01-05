@@ -17,3 +17,7 @@ func loadNodesConf(confPath string) []NodeConf {
 	json.Unmarshal(file, &nodeconfs)
 	return nodeconfs
 }
+
+func getMajoritySize(size int) int {
+	return size / 2
+}
