@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package naive_raft;
+
+service AppendEntries {
+  rpc AppendEntriesRPC (AppendEntriesReq) returns (AppendEntriesResp) {}
+}
+
+message LogEntris {
+  int32 index = 1;
+  int32 term = 2;
+  string data = 3; 
+}
+
+message AppendEntriesReq {
+  int32 term = 1;
+  int32 leaderId = 2;
+  int32 prevLogIndex = 3;
+  int32 prevTermIndex = 4;
+  repeated LogEntris LogEntris= 5;
+  int32 leaderCommit = 6;
+}
+
+message AppendEntriesResp {
+  int32 term = 1;
+  bool success = 2;
+}
