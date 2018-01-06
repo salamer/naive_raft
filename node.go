@@ -228,12 +228,19 @@ func (node *Node) AppendEntry() error {
 }
 
 func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq) (*pb.AppendEntriesResp, error) {
+	if in.Term < int32(node.currentTerm) {
+		return &pb.AppendEntriesResp{
+			Term:    int32(node.currentTerm),
+			Success: false,
+		}, nil
+	}
 	if node.getState() != FOLLOWER {
 		node.setState(FOLLOWER)
 		node.finishState <- true
 		node.setLeader(int(in.LeaderId))
 		node.currentTerm = int(in.Term)
 	} else {
+
 		node.heartbeatSignal <- true
 	}
 	return &pb.AppendEntriesResp{Term: 1, Success: true}, nil

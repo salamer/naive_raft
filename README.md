@@ -3,5 +3,8 @@
 # Naive_Raft
 
 
-> "Too young! Sometimes naive" 
+> "Too simple! Sometimes naive!" 
+>
+> "Re-election will still have to follow the (Hong Kong) Basic Law! Of course, our decision is very important too."
+>
 > -- the elder
