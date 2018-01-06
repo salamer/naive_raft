@@ -238,7 +238,7 @@ func (node *Node) AppendEntry() error {
 						LogEntris:     _ress,
 						LeaderCommit:  int32(node.commitIndex),
 					})
-					fmt.Printf("result:%+v\n", result)
+					fmt.Printf("result:%+v,%+v\n", _ress, ress)
 					if result.Success {
 						node.nextIndex[sibling.ID] += (len(node.log) - node.nextIndex[sibling.ID])
 					} else {
@@ -260,6 +260,7 @@ func (node *Node) AppendEntry() error {
 }
 
 func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq) (*pb.AppendEntriesResp, error) {
+	fmt.Printf("rpc:%+v\n", in.LogEntris)
 	if in.Term < int32(node.currentTerm) {
 		return &pb.AppendEntriesResp{
 			Term:    int32(node.currentTerm),
