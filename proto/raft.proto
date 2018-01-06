@@ -10,6 +10,10 @@ service Canvass {
   rpc CanvassRPC (CanvassReq) returns (CanvassResp){}
 }
 
+service SetLog {
+  rpc SetLogRPC (LogReq) returns (LogResp){}
+}
+
 message LogEntris {
   int32 index = 1;
   int32 term = 2;
@@ -40,4 +44,12 @@ message CanvassReq {
 message CanvassResp {
   int32 term = 1;
   bool votedGranted = 2;
+}
+
+message LogReq {
+  string data = 1;
+}
+
+message LogResp {
+  bool success = 1;
 }

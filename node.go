@@ -40,8 +40,8 @@ type Node struct {
 	log         []Log
 	commitIndex int
 	lastApplied int
-	nextIndex   []int
-	matchIndex  []int
+	nextIndex   map[int]int
+	matchIndex  map[int]int
 	state       int
 	leaderId    int //record the leader now
 
@@ -61,8 +61,8 @@ type Node struct {
 func NewNode(name string, id int, conf string) *Node {
 
 	// initialize nextindex and matchindx to 0
-	nextIndex := make([]int, len(conf))
-	matchIndex := make([]int, len(conf))
+	nextIndex := make(map[int]int)
+	matchIndex := make(map[int]int)
 	for i := 0; i < len(conf); i++ {
 		nextIndex[i] = 0
 		matchIndex[i] = 0
@@ -78,7 +78,7 @@ func NewNode(name string, id int, conf string) *Node {
 		lastApplied:     0,
 		nextIndex:       nextIndex,
 		matchIndex:      matchIndex,
-		state:           FOLLOWER,
+		state:           LEADER,
 		heartbeatSignal: make(chan bool),
 		finishState:     make(chan bool),
 		siblingNodes:    nodeconfs,
@@ -175,7 +175,7 @@ func (node *Node) leader_loop() {
 	for flag {
 		select {
 		case <-time.After(time.Second * time.Duration(rand.Intn(INTERVAL))):
-			_ = node.AppendEntry()
+			//			_ = node.AppendEntry()
 		case <-node.finishState:
 			flag = false
 		}
@@ -307,6 +307,29 @@ func (node *Node) CanvassRPC(ctx context.Context, in *pb.CanvassReq) (*pb.Canvas
 		VotedGranted: false,
 	}, nil
 }
+
+func (node *Node) SetLogRPC(ctx context.Context, in *pb.LogReq) (*pb.LogResp, error) {
+	if node.getState() == LEADER {
+		if len(node.log) == 0 {
+			node.lastApplied = 0
+		}
+		node.lastApplied += 1
+		node.log = append(node.log, Log{
+			idx:  node.lastApplied,
+			term: node.currentTerm,
+			data: in.Data,
+		})
+
+		fmt.Printf("%+v\n", node.log)
+		return &pb.LogResp{
+			Success: true,
+		}, nil
+	}
+	return &pb.LogResp{
+		Success: false,
+	}, nil
+}
+
 func (node *Node) Run(host string, port int) {
 	//run node state loop
 	rand.Seed(time.Now().Unix())
@@ -318,6 +341,7 @@ func (node *Node) Run(host string, port int) {
 	s := grpc.NewServer()
 	pb.RegisterAppendEntriesServer(s, node)
 	pb.RegisterCanvassServer(s, node)
+	pb.RegisterSetLogServer(s, node)
 	reflection.Register(s)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
