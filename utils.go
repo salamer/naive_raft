@@ -7,6 +7,22 @@ import (
 	"os"
 )
 
+func max(a int, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+
+func min(a int, b int) int {
+	if a > b {
+		return b
+	} else {
+		return a
+	}
+}
+
 func loadNodesConf(confPath string) []NodeConf {
 	file, e := ioutil.ReadFile(confPath)
 	if e != nil {

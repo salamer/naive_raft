@@ -78,7 +78,7 @@ func NewNode(name string, id int, conf string) *Node {
 		lastApplied:     0,
 		nextIndex:       nextIndex,
 		matchIndex:      matchIndex,
-		state:           LEADER,
+		state:           FOLLOWER,
 		heartbeatSignal: make(chan bool),
 		finishState:     make(chan bool),
 		siblingNodes:    nodeconfs,
@@ -116,6 +116,20 @@ func (node *Node) setLeader(leaderId int) {
 	node.actionLock.Unlock()
 }
 
+func (node *Node) getLastLogIndex() int {
+	if len(node.log) > 0 {
+		return node.log[len(node.log)-1].idx
+	}
+	return 0
+}
+
+func (node *Node) getLastLogTerm() int {
+	if len(node.log) > 0 {
+		return node.log[len(node.log)-1].term
+	}
+	return 0
+}
+
 func (node *Node) loop() {
 	for {
 		fmt.Printf("%+v : term is %+v,leader is %+v\n", node.name, node.currentTerm, node.leaderId)
@@ -137,12 +151,13 @@ func (node *Node) follower_loop() {
 	flag := true
 	for flag {
 		select {
-		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL*2))):
+		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
 			fmt.Println("timeout!")
 			node.setState(CANDIDATE)
 			flag = false
 		case <-node.heartbeatSignal:
 			fmt.Println("got a heartbeat")
+			fmt.Printf("%+v log:%+v\n", node.name, node.log)
 		case <-node.finishState:
 			flag = false
 		}
@@ -172,10 +187,15 @@ func (node *Node) candidate_loop() {
 
 func (node *Node) leader_loop() {
 	flag := true
+	//initial leader server
+	for _, sibiling := range node.siblingNodes {
+		node.nextIndex[sibiling.ID] = node.commitIndex
+		node.matchIndex[sibiling.ID] = node.commitIndex
+	}
 	for flag {
 		select {
 		case <-time.After(time.Second * time.Duration(rand.Intn(INTERVAL))):
-			//			_ = node.AppendEntry()
+			_ = node.AppendEntry()
 		case <-node.finishState:
 			flag = false
 		}
@@ -183,14 +203,8 @@ func (node *Node) leader_loop() {
 }
 
 //RPC function
-func (node *Node) getEntris(start int, end int) []*pb.LogEntris {
-	ResEntris := make([]*pb.LogEntris, start-end)
-	for i := start; i < end; i++ {
-		ResEntris[i].Index = int32(node.log[i].idx)
-		ResEntris[i].Term = int32(node.log[i].term)
-		ResEntris[i].Data = node.log[i].data
-	}
-	return ResEntris
+func (node *Node) getEntris(start int, end int) []Log {
+	return node.log[start:end]
 }
 
 func (node *Node) AppendEntry() error {
@@ -205,14 +219,33 @@ func (node *Node) AppendEntry() error {
 
 					c := pb.NewAppendEntriesClient(conn)
 					node.observersLock.RLock()
-					_, err := c.AppendEntriesRPC(context.Background(), &pb.AppendEntriesReq{
+					ress := node.getEntris(node.nextIndex[sibling.ID], len(node.log))
+					fmt.Printf("res:%+v\n", ress)
+					var _ress []*pb.LogEntris
+					for i := 0; i < len(ress); i++ {
+						_ress = append(_ress, &pb.LogEntris{
+							Index: int32(ress[i].idx),
+							Term:  int32(ress[i].term),
+							Data:  ress[i].data,
+						})
+					}
+
+					result, err := c.AppendEntriesRPC(context.Background(), &pb.AppendEntriesReq{
 						Term:          int32(node.currentTerm),
 						LeaderId:      int32(node.id),
-						PrevLogIndex:  int32(node.commitIndex),
-						PrevTermIndex: int32(node.commitIndex),
-						LogEntris:     node.getEntris(0, len(node.log)),
+						PrevLogIndex:  int32(node.nextIndex[sibling.ID] - 1), //the previous log index
+						PrevTermIndex: int32(node.currentTerm),
+						LogEntris:     _ress,
 						LeaderCommit:  int32(node.commitIndex),
 					})
+					fmt.Printf("result:%+v\n", result)
+					if result.Success {
+						node.nextIndex[sibling.ID] += (len(node.log) - node.nextIndex[sibling.ID])
+					} else {
+						if node.nextIndex[sibling.ID] > 0 {
+							node.nextIndex[sibling.ID] -= 1
+						}
+					}
 					if err != nil {
 						fmt.Printf("append entries error: %v\n", err)
 					}
@@ -242,7 +275,32 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 
 		node.heartbeatSignal <- true
 	}
-	return &pb.AppendEntriesResp{Term: 1, Success: true}, nil
+	if len(node.log) > 0 && node.log[in.PrevLogIndex].term != int(in.PrevTermIndex) {
+		return &pb.AppendEntriesResp{
+			Term:    int32(node.currentTerm),
+			Success: false,
+		}, nil
+	}
+	maxLogIdx := 0
+	if len(in.LogEntris) > 0 {
+		lastLogIdx := 0
+		if len(node.log) > 0 {
+			lastLogIdx = node.log[len(node.log)-1].idx
+		}
+		for _, log := range in.LogEntris {
+			if int(log.Index) > lastLogIdx {
+				node.log = append(node.log, Log{
+					idx:  int(log.Index),
+					term: int(log.Term),
+					data: log.Data,
+				})
+			}
+			maxLogIdx = max(maxLogIdx, int(log.Index))
+		}
+		node.commitIndex = min(int(in.LeaderCommit), maxLogIdx)
+	}
+	node.commitIndex = int(in.LeaderCommit)
+	return &pb.AppendEntriesResp{Term: int32(node.currentTerm), Success: true}, nil
 }
 
 func (node *Node) Canvass() error {
@@ -273,12 +331,12 @@ func (node *Node) Canvass() error {
 						}
 					}
 					node.observersLock.Unlock()
-					if node.votedCnt >= node.majoritySize {
+					if node.votedCnt >= node.majoritySize && node.getState() != LEADER {
 						node.setState(LEADER)
 						node.finishState <- true
 					} else {
 						// eletion fail,return to de follower state
-						if node.electionResCnt >= node.majoritySize {
+						if node.electionResCnt >= node.majoritySize && node.getState() == CANDIDATE {
 							node.setState(FOLLOWER)
 							node.finishState <- true
 						}
@@ -311,7 +369,7 @@ func (node *Node) CanvassRPC(ctx context.Context, in *pb.CanvassReq) (*pb.Canvas
 func (node *Node) SetLogRPC(ctx context.Context, in *pb.LogReq) (*pb.LogResp, error) {
 	if node.getState() == LEADER {
 		if len(node.log) == 0 {
-			node.lastApplied = 0
+			node.lastApplied = -1 //idx start from 0
 		}
 		node.lastApplied += 1
 		node.log = append(node.log, Log{
