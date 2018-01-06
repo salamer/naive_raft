@@ -9,7 +9,7 @@
 >
 > -- the elder
 
-naive go implementation of raft consensus algorithm [raft](go implementation of raft consensus algorithm https://raft.github.io/raft.pdf)
+naive go implementation of raft consensus algorithm [raft](https://raft.github.io/raft.pdf)
 
 ## LICENSE
 Copyright © 2018 by Aljun
