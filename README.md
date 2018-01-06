@@ -7,7 +7,7 @@
 >
 > "Re-election will still have to follow the (Hong Kong) Basic Law! Of course, our decision is very important too."
 >
-> -- the elder
+> -- the elder □-□
 
 naive go implementation of raft consensus algorithm [raft](https://raft.github.io/raft.pdf)
 

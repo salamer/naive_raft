@@ -137,7 +137,7 @@ func (node *Node) follower_loop() {
 	flag := true
 	for flag {
 		select {
-		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
+		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL*2))):
 			fmt.Println("timeout!")
 			node.setState(CANDIDATE)
 			flag = false
@@ -160,10 +160,9 @@ func (node *Node) candidate_loop() {
 		node.actionLock.Unlock()
 		node.setLeader(node.id)
 		node.termIncrement() //term++
-		fmt.Printf("candidate %+v: my term is %+v\n", node.name, node.currentTerm)
 		_ = node.Canvass()
 		select {
-		case <-time.After(time.Second * time.Duration(INTERVAL+rand.Intn(INTERVAL))):
+		case <-time.After(time.Second * time.Duration(rand.Intn(INTERVAL)*2)):
 			fmt.Println("candidate timeout")
 		case <-node.finishState:
 			flag = false
@@ -257,23 +256,19 @@ func (node *Node) Canvass() error {
 					}
 
 					c := pb.NewCanvassClient(conn)
-					node.observersLock.RLock()
 					r, err := c.CanvassRPC(context.Background(), &pb.CanvassReq{
 						Term:         int32(node.currentTerm),
 						CandidateId:  int32(node.id),
 						LastLogIndex: int32(node.commitIndex),
 						LastLogTerm:  int32(node.currentTerm),
 					})
-					node.observersLock.RUnlock()
 					//means has already get res from server i
 					node.observersLock.Lock()
 					node.electionResCnt += 1
-					fmt.Printf("vote:%+v,res:%+v\n", node.votedCnt, node.electionResCnt)
 					if err != nil {
 						fmt.Printf("election error: %v\n", err)
 					} else {
 						if r.VotedGranted && r.Term == int32(node.currentTerm) {
-							fmt.Printf("%+v got vote from  %+v\n", node.id, sibling.ID)
 							node.votedCnt += 1
 						}
 					}
@@ -300,7 +295,6 @@ func (node *Node) Canvass() error {
 
 func (node *Node) CanvassRPC(ctx context.Context, in *pb.CanvassReq) (*pb.CanvassResp, error) {
 	node.gotHeartbeat()
-	fmt.Printf("%+v got vote request by %+v\n", node.id, in.CandidateId)
 	if node.currentTerm < int(in.Term) {
 		node.currentTerm = int(in.Term)
 		return &pb.CanvassResp{
@@ -315,8 +309,8 @@ func (node *Node) CanvassRPC(ctx context.Context, in *pb.CanvassReq) (*pb.Canvas
 }
 func (node *Node) Run(host string, port int) {
 	//run node state loop
+	rand.Seed(time.Now().Unix())
 	go node.loop()
-
 	lis, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
 	if err != nil {
 		fmt.Printf("failed to listen: %v", err)
