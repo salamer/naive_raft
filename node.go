@@ -243,7 +243,7 @@ func (node *Node) AppendEntry() error {
 					result, err := c.AppendEntriesRPC(context.Background(), &pb.AppendEntriesReq{
 						Term:          int32(node.currentTerm),
 						LeaderId:      int32(node.id),
-						PrevLogIndex:  int32(node.nextIndex[sibling.ID] - 1), //the previous log index
+						PrevLogIndex:  int32(node.nextIndex[sibling.ID] - 2), //the previous log index
 						PrevTermIndex: int32(node.currentTerm),
 						LogEntris:     _ress,
 						LeaderCommit:  int32(node.commitIndex),
@@ -286,7 +286,7 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 
 		node.heartbeatSignal <- true
 	}
-	if len(node.log) > 0 && in.PrevLogIndex != -1 && node.log[in.PrevLogIndex].term != int(in.PrevTermIndex) {
+	if len(node.log) > 0 && in.PrevLogIndex >= 0 && node.log[in.PrevLogIndex].term != int(in.PrevTermIndex) {
 		return &pb.AppendEntriesResp{
 			Term:    int32(node.currentTerm),
 			Success: false,
@@ -307,7 +307,7 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 				}
 
 				node.log = append(node.log, Log{
-					idx:  int(log.Index),
+					idx:  idx,
 					term: int(log.Term),
 					data: log.Data,
 				})
