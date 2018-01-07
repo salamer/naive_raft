@@ -25,6 +25,9 @@ const (
 	INTERVAL = 5 //heartbeat INTERVAL
 )
 
+// fix golang pointer convert 0 error
+const ZERO_REPLACE_NUM = 10000000
+
 type NodeConf struct {
 	Name string `json:"name"`
 	ID   int    `json:"id"`
@@ -223,8 +226,15 @@ func (node *Node) AppendEntry() error {
 					fmt.Printf("res:%+v\n", ress)
 					var _ress []*pb.LogEntris
 					for i := 0; i < len(ress); i++ {
+
+						// fix golang pointer convert 0 error
+						idx := int32(ress[i].idx)
+						if idx == 0 {
+							idx = int32(ZERO_REPLACE_NUM)
+						}
+
 						_ress = append(_ress, &pb.LogEntris{
-							Index: int32(ress[i].idx),
+							Index: idx, //can't not convert 0 in golang
 							Term:  int32(ress[i].term),
 							Data:  ress[i].data,
 						})
@@ -238,6 +248,9 @@ func (node *Node) AppendEntry() error {
 						LogEntris:     _ress,
 						LeaderCommit:  int32(node.commitIndex),
 					})
+					if err != nil {
+						fmt.Printf("append entries error: %v\n", err)
+					}
 					fmt.Printf("result:%+v,%+v\n", _ress, ress)
 					if result.Success {
 						node.nextIndex[sibling.ID] += (len(node.log) - node.nextIndex[sibling.ID])
@@ -245,9 +258,6 @@ func (node *Node) AppendEntry() error {
 						if node.nextIndex[sibling.ID] > 0 {
 							node.nextIndex[sibling.ID] -= 1
 						}
-					}
-					if err != nil {
-						fmt.Printf("append entries error: %v\n", err)
 					}
 					node.observersLock.RUnlock()
 					defer conn.Close()
@@ -260,7 +270,7 @@ func (node *Node) AppendEntry() error {
 }
 
 func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq) (*pb.AppendEntriesResp, error) {
-	fmt.Printf("rpc:%+v\n", in.LogEntris)
+	fmt.Printf("rpc:%+v\n", in)
 	if in.Term < int32(node.currentTerm) {
 		return &pb.AppendEntriesResp{
 			Term:    int32(node.currentTerm),
@@ -276,7 +286,7 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 
 		node.heartbeatSignal <- true
 	}
-	if len(node.log) > 0 && node.log[in.PrevLogIndex].term != int(in.PrevTermIndex) {
+	if len(node.log) > 0 && in.PrevLogIndex != -1 && node.log[in.PrevLogIndex].term != int(in.PrevTermIndex) {
 		return &pb.AppendEntriesResp{
 			Term:    int32(node.currentTerm),
 			Success: false,
@@ -290,6 +300,12 @@ func (node *Node) AppendEntriesRPC(ctx context.Context, in *pb.AppendEntriesReq)
 		}
 		for _, log := range in.LogEntris {
 			if int(log.Index) > lastLogIdx {
+				// fix golang pointer convert 0 error
+				idx := int(log.Index)
+				if idx == ZERO_REPLACE_NUM {
+					idx = 0
+				}
+
 				node.log = append(node.log, Log{
 					idx:  int(log.Index),
 					term: int(log.Term),

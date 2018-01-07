@@ -15,7 +15,7 @@ service SetLog {
 }
 
 message LogEntris {
-  int32 index = 1;
+  int32 index = 1;//go protobuf can't parse 0
   int32 term = 2;
   string data = 3; 
 }
