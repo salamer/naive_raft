@@ -16,7 +16,7 @@ var (
 
 func main() {
 	kingpin.Parse()
-	node := raft.NewNode(*name, *id, "/Users/chenyangyang/go/src/github.com/salamer/naive_raft/conf.json")
+	node := raft.NewNode(*name, *id, *host, *port, "/Users/chenyangyang/go/src/github.com/salamer/naive_raft/conf.json")
 	fmt.Printf("I'm listening %+v:%+v\n", *host, *port)
-	node.Run(*host, *port)
+	node.Run()
 }

@@ -7,4 +7,5 @@ var (
 	NotCandiateErr = errors.New("not candidate")
 	NotLeaderErr   = errors.New("not leader")
 	SetLogErr      = errors.New("can't set log")
+	NoLogErr       = errors.New("node don't have logs")
 )

@@ -36,6 +36,9 @@ type NodeConf struct {
 }
 
 type Node struct {
+	Host string
+	Port int
+
 	name        string
 	id          int
 	currentTerm int
@@ -63,7 +66,7 @@ type Node struct {
 	actionLock    sync.RWMutex //in some action function
 }
 
-func NewNode(name string, id int, conf string) *Node {
+func NewNode(name string, id int, host string, port int, conf string) *Node {
 
 	// initialize nextindex and matchindx to 0
 	nextIndex := make(map[int]int)
@@ -79,6 +82,8 @@ func NewNode(name string, id int, conf string) *Node {
 	}
 
 	return &Node{
+		Host:            host,
+		Port:            port,
 		name:            name,
 		id:              id,
 		currentTerm:     0, //initialize to 0
@@ -425,11 +430,11 @@ func (node *Node) SetLogRPC(ctx context.Context, in *pb.LogReq) (*pb.LogResp, er
 	}, nil
 }
 
-func (node *Node) Run(host string, port int) {
+func (node *Node) Run() {
 	//run node state loop
 	rand.Seed(time.Now().Unix())
 	go node.loop()
-	lis, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
+	lis, err := net.Listen("tcp", node.Host+":"+strconv.Itoa(node.Port))
 	if err != nil {
 		fmt.Printf("failed to listen: %v", err)
 	}
