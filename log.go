@@ -5,3 +5,9 @@ type Log struct {
 	term int
 	data string
 }
+
+func (node *Node) setLog(data string) error {
+	//TODO: SET log
+	node.logReq <- true
+	return nil
+}

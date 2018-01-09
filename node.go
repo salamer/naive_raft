@@ -51,6 +51,8 @@ type Node struct {
 	heartbeatSignal chan bool //the heartbeat channel
 	finishState     chan bool
 
+	logReq chan bool //use for a log will append
+
 	siblingNodes []NodeConf
 
 	electionResCnt int //count for the election request result
