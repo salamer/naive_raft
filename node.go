@@ -53,7 +53,7 @@ type Node struct {
 
 	logReq chan bool //use for a log will append
 
-	siblingNodes []NodeConf
+	siblingNodes map[int]NodeConf
 
 	electionResCnt int //count for the election request result
 	votedCnt       int //count for the server which has vote for it
@@ -68,11 +68,16 @@ func NewNode(name string, id int, conf string) *Node {
 	// initialize nextindex and matchindx to 0
 	nextIndex := make(map[int]int)
 	matchIndex := make(map[int]int)
+	siblings := make(map[int]NodeConf)
+
+	nodeconfs := loadNodesConf(conf)
+
 	for i := 0; i < len(conf); i++ {
 		nextIndex[i] = 0
 		matchIndex[i] = 0
+		siblings[nodeconfs[i].ID] = nodeconfs[i]
 	}
-	nodeconfs := loadNodesConf(conf)
+
 	return &Node{
 		name:            name,
 		id:              id,
@@ -87,7 +92,7 @@ func NewNode(name string, id int, conf string) *Node {
 		heartbeatSignal: make(chan bool),
 		finishState:     make(chan bool),
 		logReq:          make(chan bool),
-		siblingNodes:    nodeconfs,
+		siblingNodes:    siblings,
 		majoritySize:    getMajoritySize(len(nodeconfs)),
 	}
 }
@@ -104,6 +109,18 @@ func (node *Node) termIncrement() {
 
 func (node *Node) gotHeartbeat() {
 	node.heartbeatSignal <- true
+}
+
+func (node *Node) getLeader() NodeConf {
+	node.actionLock.RLock()
+	defer node.actionLock.RUnlock()
+	return node.siblingNodes[node.getLeaderID()]
+}
+
+func (node *Node) getLeaderID() int {
+	node.actionLock.RLock()
+	defer node.actionLock.RUnlock()
+	return node.leaderId
 }
 
 func (node *Node) setState(state int) error {
