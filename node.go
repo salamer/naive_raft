@@ -86,6 +86,7 @@ func NewNode(name string, id int, conf string) *Node {
 		state:           FOLLOWER,
 		heartbeatSignal: make(chan bool),
 		finishState:     make(chan bool),
+		logReq:          make(chan bool),
 		siblingNodes:    nodeconfs,
 		majoritySize:    getMajoritySize(len(nodeconfs)),
 	}
