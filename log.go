@@ -1,5 +1,10 @@
 package naive_raft
 
+import (
+	"encoding/json"
+	"io/ioutil"
+)
+
 type Log struct {
 	idx  int
 	term int
@@ -27,4 +32,16 @@ func (node *Node) getLogs() ([]Log, error) {
 	} else {
 		return nil, NoLogErr
 	}
+}
+
+func (node *Node) persistLog(filename string) error {
+	jsonTypeLog, err := json.Marshal(node.log)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(filename, jsonTypeLog, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
 }
